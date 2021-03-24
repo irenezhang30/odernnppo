@@ -96,10 +96,8 @@ def main():
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
-            import pdb; pdb.set_trace()
 
             # times = envs.get_times
-            times = torch.zeros_like(obs)
             for info in infos:
                 if 'episode' in info.keys():
                     tmp = (j + 1) * args.num_processes * args.num_steps
@@ -114,7 +112,7 @@ def main():
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos])
             rollouts.insert(obs, recurrent_hidden_states, action,
-                            action_log_prob, value, reward, masks, bad_masks, times)
+                            action_log_prob, value, reward, masks, bad_masks)
 
         with torch.no_grad():
             next_value = actor_critic.get_value(

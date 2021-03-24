@@ -49,8 +49,8 @@ class DiffeqSolver(nn.Module):
         """
             Decode the trajectory through ODE Solver
             @:param first_point, shape [N, D]
-                    time_steps, shape [T,]
-            @:return predicted the trajectory, shape [N, T, D]
+                    time_steps, shape [N, T,]
+            @:return predicted the trajectory, shape [N, D]
         """
 
         # if done, reset hidden_state to zero
@@ -60,21 +60,30 @@ class DiffeqSolver(nn.Module):
         except:
             # print ("initializing")
             hxs = torch.zeros((masks.shape[0], 64)).to(device)
+
         #dummy, # why not 2d?
-        time_steps = torch.FloatTensor([0, 1]).to(device)
+        # time_steps = torch.FloatTensor([0, 1]).to(device)
 
         # print ("**************", hxs.squeeze(0).shape, actions.shape)
         # first_point = torch.cat((hxs.squeeze(0), actions), axis=1)
+
         first_point = hxs.squeeze(0)
         #
         # pred = odeint(self.ode_func, first_point, time_steps,
         #               rtol=self.odeint_rtol, atol=self.odeint_atol, method=self.method)  # [T, N, D]
         #
-        pred = odeint(self.ode_func, first_point, time_steps,
-                      rtol=self.odeint_rtol, atol=self.odeint_atol, method="explicit_adams")  # [T, N, D]
+        pred = []
+        for i in range(len(time_steps)):
+            if time_steps[i][0] == 0:
+                pred.append(first_point[i])
+            else:
+                pred.append(odeint(self.ode_func, first_point[i], time_steps[i],
+                            rtol=self.odeint_rtol, atol=self.odeint_atol, method="explicit_adams")[-1])  # [T, N, D]
 
-        assert (torch.mean(pred[0, :, :] - first_point) < 0.001)  # the first prediction is same with first point
-        return pred[-1]
+        pred = torch.stack(pred,dim=0)
+
+        # assert (torch.mean(pred[0, :, :] - first_point) < 0.001)  # the first prediction is same with first point
+        return pred
 
         # pred = pred.permute(1, 0, 2)  # [N, T, D]
         # assert (torch.mean(pred[:, 0, :] - first_point) < 0.001)  # the first prediction is same with first point
@@ -253,12 +262,11 @@ class NNBase(nn.Module):
 
 class MLPBase(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=64, use_ode=False):
-        super(MLPBase, self).__init__(recurrent, num_inputs-1, hidden_size, use_ode=use_ode)
+        super(MLPBase, self).__init__(recurrent, num_inputs-2, hidden_size, use_ode=use_ode)
 
         if recurrent:
             num_inputs = hidden_size
 
-        import pdb; pdb.set_trace()
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0), np.sqrt(2))
 
@@ -275,17 +283,16 @@ class MLPBase(NNBase):
         self.train()
 
     # TODO: get timesteps, actions
-    def forward(self, observations, rnn_hxs, masks, actions=None, timesteps = None):
-        import pdb; pdb.set_trace()
-        dt = observations[:, -1]
-        x = observations[:, :-1]
+    def forward(self, observations, rnn_hxs, masks, actions=None):
+        time_steps = observations[:, -2:]
+        x = observations[:, :-2]
         
         if self.use_ode:
             # time_steps, hxs, action, masks,
             # dummy time-steps for now
             # print ("rnn_hxs", rnn_hxs.shape, actions.shape, masks.shape)
             ## rnn_hxs 8x64, actions 8x3, masks 8x1
-            latent_state = self.diffeq_solver(dt, rnn_hxs, actions, masks)
+            latent_state = self.diffeq_solver(time_steps, rnn_hxs, actions, masks)
             x, rnn_hxs = self._forward_gru(x, latent_state, masks)
 
         elif self.is_recurrent:
