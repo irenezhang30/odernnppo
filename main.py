@@ -96,6 +96,8 @@ def main():
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
+            import pdb; pdb.set_trace()
+
             # times = envs.get_times
             times = torch.zeros_like(obs)
             for info in infos:
@@ -141,6 +143,7 @@ def main():
                 actor_critic,
                 getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
             ], os.path.join(save_path, args.env_name + ".pt"))
+
 
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps

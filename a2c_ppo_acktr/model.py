@@ -253,11 +253,12 @@ class NNBase(nn.Module):
 
 class MLPBase(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=64, use_ode=False):
-        super(MLPBase, self).__init__(recurrent, num_inputs, hidden_size, use_ode=use_ode)
+        super(MLPBase, self).__init__(recurrent, num_inputs-1, hidden_size, use_ode=use_ode)
 
         if recurrent:
             num_inputs = hidden_size
 
+        import pdb; pdb.set_trace()
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0), np.sqrt(2))
 
@@ -275,13 +276,16 @@ class MLPBase(NNBase):
 
     # TODO: get timesteps, actions
     def forward(self, observations, rnn_hxs, masks, actions=None, timesteps = None):
-        x = observations
+        import pdb; pdb.set_trace()
+        dt = observations[:, -1]
+        x = observations[:, :-1]
+        
         if self.use_ode:
             # time_steps, hxs, action, masks,
             # dummy time-steps for now
             # print ("rnn_hxs", rnn_hxs.shape, actions.shape, masks.shape)
             ## rnn_hxs 8x64, actions 8x3, masks 8x1
-            latent_state = self.diffeq_solver(None, rnn_hxs, actions, masks)
+            latent_state = self.diffeq_solver(dt, rnn_hxs, actions, masks)
             x, rnn_hxs = self._forward_gru(x, latent_state, masks)
 
         elif self.is_recurrent:

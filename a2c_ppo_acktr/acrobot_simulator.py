@@ -155,6 +155,7 @@ class AcrobotSimulator(core.Env):
         return tmp
 
     def _get_ob(self):
+
         return np.array(self.state)
 
     def _terminal(self, state=None):

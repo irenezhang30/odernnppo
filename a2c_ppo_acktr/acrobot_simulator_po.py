@@ -85,8 +85,12 @@ class AcrobotSimulator_po(core.Env):
     def __init__(self):
         self.viewer = None
         # high = np.array([1.0, 1.0, 1.0, 1.0, self.MAX_VEL_1, self.MAX_VEL_2])
-        high = np.array([1.0, self.MAX_VEL_1]) # mask the tip
-        low = -high
+        # high = np.array([1.0, self.MAX_VEL_1]) # mask the tip
+        # low = -high
+
+        high = np.array([1.0, self.MAX_VEL_1, 6] )
+        low = np.array([-1.0, -self.MAX_VEL_1, 0] )
+
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         self.action_space = spaces.Discrete(3)
         self.state = None
@@ -105,6 +109,7 @@ class AcrobotSimulator_po(core.Env):
         self.t = 0
         self.state = self.np_random.uniform(low=-0.1, high=0.1, size=(4,))
         self.po_state = self.np_random.uniform(low=-0.1, high=0.1, size=(2,)) # added
+        self.po_state = np.append(self.po_state, 0)
         return self._get_ob()
 
     def step(self, a, dt=1):
@@ -137,13 +142,16 @@ class AcrobotSimulator_po(core.Env):
         ns[3] = bound(ns[3], -self.MAX_VEL_2, self.MAX_VEL_2)
 
         self.state = ns
-        self.po_state = np.array(ns[0], ns[2]) # added: mask the tip
+        # self.po_state = np.array(ns[0], ns[2]) # added: mask the tip
+        self.po_state = np.array(ns[0], ns[2], dt) # added: mask the tip
+        import pdb; pdb.set_trace()
         self.t += dt
         reward = self.calc_reward()
         terminal = self.is_terminal()
-        return self._get_ob(), reward, terminal, {}
+        return self._get_ob(), reward, terminal, {"dt": dt}
 
     def _get_ob(self):
+        # self.po_state = np.concatenate((self.po_state, infos["dt"]), axis=1)
         return np.array(self.po_state)
 
     def _terminal(self, state=None):
