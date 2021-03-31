@@ -21,24 +21,13 @@ class FixedCategorical(torch.distributions.Categorical):
 
     def log_probs(self, actions):
         actions = actions.to(device)
-        try:
-            return (
-                super()
-                .log_prob(actions.squeeze(-1))
-                .view(actions.size(0), -1)
-                .sum(-1)
-                .unsqueeze(-1)
-            )
-        except:
-            actions = torch.zeros((8, 1)).to(device)
-            print ("*************************", actions)
-            return (
-                super()
-                .log_prob(actions.squeeze(-1))
-                .view(actions.size(0), -1)
-                .sum(-1)
-                .unsqueeze(-1)
-            )
+        return (
+            super()
+            .log_prob(actions.squeeze(-1))
+            .view(actions.size(0), -1)
+            .sum(-1)
+            .unsqueeze(-1)
+        )
 
     def mode(self):
         return self.probs.argmax(dim=-1, keepdim=True)

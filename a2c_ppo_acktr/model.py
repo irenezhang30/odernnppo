@@ -34,6 +34,22 @@ class ODEFunc(nn.Module):
         return x
 
 
+class Xi(nn.Module):
+    def __init__(self, input_size=5, output_size=2, hidden_size=256):
+        super(Xi, self).__init__()
+        self.l1 = nn.Linear(input_size, output_size)
+        # self.l2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        """
+        Network appends action to last hidden state
+        """
+        # print ("shape****************", x.shape)
+        x = self.l1(x)
+        # x = self.relu(x)
+        # x = self.l2(x)
+        return x
+
 class DiffeqSolver(nn.Module):
 
     def __init__(self, ode_func, method, odeint_rtol, odeint_atol):
@@ -55,11 +71,7 @@ class DiffeqSolver(nn.Module):
 
         # if done, reset hidden_state to zero
         # print ("**************", hxs.shape, masks.shape)
-        try:
-            hxs = (hxs * masks).unsqueeze(0)
-        except:
-            # print ("initializing")
-            hxs = torch.zeros((masks.shape[0], 64)).to(device)
+        hxs = (hxs * masks).unsqueeze(0)
 
         #dummy, # why not 2d?
         # time_steps = torch.FloatTensor([0, 1]).to(device)
@@ -74,11 +86,11 @@ class DiffeqSolver(nn.Module):
         #
         pred = []
         for i in range(len(time_steps)):
-            if time_steps[i][0] == 0:
+            if time_steps[i][-1] == 0:
                 pred.append(first_point[i])
             else:
-                pred.append(odeint(self.ode_func, first_point[i], time_steps[i],
-                            rtol=self.odeint_rtol, atol=self.odeint_atol, method="explicit_adams")[-1])  # [T, N, D]
+                ode_results = odeint(self.ode_func, first_point[i], time_steps[i], rtol=self.odeint_rtol, atol=self.odeint_atol, method=self.ode_method)[-1] 
+                pred.append(ode_results)  # [T, N, D]
 
         pred = torch.stack(pred,dim=0)
 
@@ -138,7 +150,7 @@ class Policy(nn.Module):
             action = dist.mode()
         else:
             action = dist.sample()
-
+        
         action_log_probs = dist.log_probs(action)
         dist_entropy = dist.entropy().mean()
 
@@ -175,8 +187,9 @@ class NNBase(nn.Module):
 
             # self.gen_ode_func = ODEFunc(input_size=recurrent_input_size+3, output_size=recurrent_input_size)
             # self.gen_ode_func = ODEFunc(input_size=64+3, output_size=64)
+            self.xi = Xi(input_size=67, output_size=64)
             self.gen_ode_func = ODEFunc(input_size=64 , output_size=64)
-            self.diffeq_solver = DiffeqSolver(self.gen_ode_func, 'dopri5', ode_tol, ode_tol / 10)
+            self.diffeq_solver = DiffeqSolver(self.gen_ode_func, 'explicit_adams', ode_tol, ode_tol / 10)
 
         if recurrent:
             self.gru = nn.GRU(recurrent_input_size, hidden_size)
@@ -202,8 +215,15 @@ class NNBase(nn.Module):
     def output_size(self):
         return self._hidden_size
 
-    def _forward_gru(self, x, hxs, masks, actions=None):
+    def _forward_gru(self, x, hxs, masks, actions=None, diffeq=None, xi=None):
         if x.size(0) == hxs.size(0):
+            if diffeq:
+                time_steps = x[:, -3:-1]
+                actions = F.one_hot(x[:,-1].long(),3)
+                x = x[:, :-3]
+                hxs = xi(torch.cat([hxs, actions], dim=1))
+                hxs = diffeq(time_steps, hxs, actions, masks) 
+
             x, hxs = self.gru(x.unsqueeze(0), (hxs * masks).unsqueeze(0))
             x = x.squeeze(0)
             hxs = hxs.squeeze(0)
@@ -238,17 +258,31 @@ class NNBase(nn.Module):
 
             hxs = hxs.unsqueeze(0)
             outputs = []
-            for i in range(len(has_zeros) - 1):
-                # We can now process steps that don't have any zeros in masks together!
-                # This is much faster
-                start_idx = has_zeros[i]
-                end_idx = has_zeros[i + 1]
+            if diffeq:
+                for i in range(T):
+                    hxs = hxs.squeeze(0)
 
-                rnn_scores, hxs = self.gru(
-                    x[start_idx:end_idx],
-                    hxs * masks[start_idx].view(1, -1, 1))
+                    time_steps = x[i,:,-3:-1]
+                    actions = F.one_hot(x[i,:,-1].long(),3)
+                    thing = x[i,:,:-3]
 
-                outputs.append(rnn_scores)
+                    hxs = xi(torch.cat([hxs, actions], dim=-1))
+                    hxs = diffeq(time_steps, hxs, actions, masks[i].unsqueeze(1)) 
+                    rnn_scores, hxs = self.gru(thing.unsqueeze(0),(hxs * masks[i].unsqueeze(1)).unsqueeze(0))
+                    outputs.append(rnn_scores)
+
+            else:
+                for i in range(len(has_zeros) - 1):
+                    # We can now process steps that don't have any zeros in masks together!
+                    # This is much faster
+                    start_idx = has_zeros[i]
+                    end_idx = has_zeros[i + 1]
+
+                    rnn_scores, hxs = self.gru(
+                        x[start_idx:end_idx],
+                        hxs * masks[start_idx].view(1, -1, 1))
+
+                    outputs.append(rnn_scores)
 
             # assert len(outputs) == T
             # x is a (T, N, -1) tensor
@@ -262,7 +296,7 @@ class NNBase(nn.Module):
 
 class MLPBase(NNBase):
     def __init__(self, num_inputs, recurrent=False, hidden_size=64, use_ode=False):
-        super(MLPBase, self).__init__(recurrent, num_inputs-2, hidden_size, use_ode=use_ode)
+        super(MLPBase, self).__init__(recurrent, num_inputs-3, hidden_size, use_ode=use_ode) # -3 because shit
 
         if recurrent:
             num_inputs = hidden_size
@@ -284,16 +318,19 @@ class MLPBase(NNBase):
 
     # TODO: get timesteps, actions
     def forward(self, observations, rnn_hxs, masks, actions=None):
-        time_steps = observations[:, -2:]
-        x = observations[:, :-2]
         
         if self.use_ode:
             # time_steps, hxs, action, masks,
             # dummy time-steps for now
             # print ("rnn_hxs", rnn_hxs.shape, actions.shape, masks.shape)
             ## rnn_hxs 8x64, actions 8x3, masks 8x1
-            latent_state = self.diffeq_solver(time_steps, rnn_hxs, actions, masks)
-            x, rnn_hxs = self._forward_gru(x, latent_state, masks)
+
+            # try:
+            #     rnn_hxs = self.xi(torch.cat([rnn_hxs, actions], dim=1))
+            # except:
+            #     import pdb; pdb.set_trace()
+            # latent_state = self.diffeq_solver(time_steps, rnn_hxs, actions, masks)
+            x, rnn_hxs = self._forward_gru(observations, rnn_hxs, masks, diffeq=self.diffeq_solver, xi=self.xi)
 
         elif self.is_recurrent:
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks)
